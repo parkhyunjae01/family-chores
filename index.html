@@ -172,15 +172,22 @@ function App(){
 
   function settle(){
     var summary=getStats();
-    db.ref("family-chores/settleHistory").push({date:tod(),timestamp:Date.now(),summary:summary});
-    db.ref("family-chores/logs").remove();
-    doToast("정산 완료!");setView("home");
+    var settleId = Date.now().toString();
+    db.ref("family-chores/settleHistory").push({date:tod(),timestamp:Date.now(),summary:summary,settleId:settleId});
+    // Mark logs as settled instead of deleting
+    logs.forEach(function(l){
+      if(l._key && !l.settled){
+        db.ref("family-chores/logs/"+l._key+"/settled").set(settleId);
+      }
+    });
+    doToast("정산 완료! 기록은 달력에서 계속 볼 수 있어요");setView("home");
   }
 
   function getStats(){
     var s={};
     members.forEach(function(m){s[m]={total:0,count:0,byChore:{}}});
     logs.forEach(function(l){
+      if(l.settled) return; // skip settled logs
       if(!s[l.member])s[l.member]={total:0,count:0,byChore:{}};
       s[l.member].total+=l.reward; s[l.member].count+=1;
       if(!s[l.member].byChore[l.choreName])s[l.member].byChore[l.choreName]={count:0,total:0,emoji:l.emoji};
@@ -290,8 +297,9 @@ function App(){
       choreGrid
     ));
 
-    // Recent logs
-    var logItems = logs.slice(0,20).map(function(l){
+    // Recent logs (unsettled only)
+    var unsettledLogs = logs.filter(function(l){return !l.settled});
+    var logItems = unsettledLogs.slice(0,20).map(function(l){
       var mi = members.indexOf(l.member);
       return R("div",{key:l._key||l.id,style:{display:"flex",alignItems:"center",gap:12,background:"rgba(255,255,255,.03)",borderRadius:12,padding:"12px 14px"}},
         R("div",{className:"avatar",style:{width:32,height:32,background:CL[mi>=0?mi%CL.length:0],fontSize:13}},l.member[0]),
@@ -306,7 +314,7 @@ function App(){
 
     els.push(R("div",{key:"rc",style:{padding:"0 20px",marginTop:24}},
       R("h2",{style:{fontSize:16,fontWeight:700,marginBottom:12}},"최근 기록"),
-      logs.length===0 ?
+      unsettledLogs.length===0 ?
         R("div",{style:{textAlign:"center",padding:"30px 0",opacity:.3,fontSize:14}},"아직 기록이 없습니다") :
         R("div",{style:{display:"flex",flexDirection:"column",gap:6}},logItems)
     ));
@@ -560,9 +568,9 @@ function App(){
       var sdEntries = Object.entries(sdSum).map(function(e){
         var n=e[0], d=e[1];
         var items = d.items.map(function(it){
-          return R("div",{key:it._key||it.id,style:{display:"flex",justifyContent:"space-between",fontSize:13,opacity:.8}},
-            R("span",null,it.emoji+" "+it.choreName),
-            R("span",{style:{color:"#4ECDC4",fontWeight:600}},"+"+fm(it.reward))
+          return R("div",{key:it._key||it.id,style:{display:"flex",justifyContent:"space-between",fontSize:13,opacity:it.settled?.6:.8}},
+            R("span",null,it.emoji+" "+it.choreName+(it.settled?" ✅":"")),
+            R("span",{style:{color:it.settled?"#888":"#4ECDC4",fontWeight:600}},"+"+fm(it.reward))
           );
         });
         return R("div",{key:n,style:{background:"rgba(255,255,255,.04)",borderRadius:14,padding:16,marginBottom:10}},
