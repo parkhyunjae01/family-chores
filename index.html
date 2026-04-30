@@ -613,8 +613,162 @@ function App(){
     ));
   }
 
+  // REPORT VIEW
+  if(view==="report"){
+    // Analysis functions
+    var now = new Date();
+    var thisWeekLogs = logs.filter(function(l){
+      var d = new Date(l.date+"T00:00:00");
+      var diff = (now - d) / (1000*60*60*24);
+      return diff <= 7;
+    });
+    var thisMonthLogs = logs.filter(function(l){
+      var p = l.date.split("-");
+      return Number(p[0])===now.getFullYear() && Number(p[1])===now.getMonth()+1;
+    });
+
+    // MVP
+    var weekTotals = {};
+    thisWeekLogs.forEach(function(l){ weekTotals[l.member] = (weekTotals[l.member]||0) + l.reward; });
+    var mvp = null; var mvpAmt = 0;
+    Object.entries(weekTotals).forEach(function(e){ if(e[1]>mvpAmt){mvp=e[0];mvpAmt=e[1]} });
+
+    // Least contributor this week
+    var least = null; var leastAmt = Infinity;
+    members.forEach(function(m){ var a=weekTotals[m]||0; if(a<leastAmt){least=m;leastAmt=a} });
+
+    // Fairness score (how evenly distributed)
+    var monthTotals = {};
+    thisMonthLogs.forEach(function(l){ monthTotals[l.member] = (monthTotals[l.member]||0) + l.reward; });
+    var monthTotal = thisMonthLogs.reduce(function(s,l){return s+l.reward},0);
+    var idealShare = monthTotal / (members.length || 1);
+    var fairness = 100;
+    if(monthTotal > 0){
+      var deviation = 0;
+      members.forEach(function(m){ deviation += Math.abs((monthTotals[m]||0) - idealShare) });
+      fairness = Math.max(0, Math.round(100 - (deviation / monthTotal * 50)));
+    }
+
+    // Day of week pattern
+    var dayNames = ["일","월","화","수","목","금","토"];
+    var dayCounts = [0,0,0,0,0,0,0];
+    logs.forEach(function(l){ var d=new Date(l.date+"T00:00:00"); dayCounts[d.getDay()]++ });
+    var busiestDay = 0;
+    dayCounts.forEach(function(c,i){ if(c>dayCounts[busiestDay]) busiestDay=i });
+
+    // Most/least done chore this month
+    var choreCounts = {};
+    thisMonthLogs.forEach(function(l){
+      choreCounts[l.choreName] = choreCounts[l.choreName] || {count:0,emoji:l.emoji};
+      choreCounts[l.choreName].count++;
+    });
+    var topChore = null; var topChoreCount = 0;
+    var botChore = null; var botChoreCount = Infinity;
+    Object.entries(choreCounts).forEach(function(e){
+      if(e[1].count>topChoreCount){topChore={name:e[0],emoji:e[1].emoji};topChoreCount=e[1].count}
+      if(e[1].count<botChoreCount){botChore={name:e[0],emoji:e[1].emoji};botChoreCount=e[1].count}
+    });
+
+    // Streak detection
+    var streaks = [];
+    members.forEach(function(m){
+      var mLogs = logs.filter(function(l){return l.member===m});
+      if(mLogs.length<2) return;
+      var dates = [];
+      mLogs.forEach(function(l){ if(dates.indexOf(l.date)===-1) dates.push(l.date) });
+      dates.sort().reverse();
+      var streak = 1;
+      for(var i=0;i<dates.length-1;i++){
+        var d1=new Date(dates[i]+"T00:00:00");
+        var d2=new Date(dates[i+1]+"T00:00:00");
+        if((d1-d2)/(1000*60*60*24)===1) streak++;
+        else break;
+      }
+      if(streak>=2) streaks.push({member:m,days:streak});
+    });
+
+    // Fun messages based on analysis
+    var funMsg = [];
+    if(mvp && mvpAmt>0) funMsg.push({emoji:"🏆",text:mvp+"님이 이번 주 MVP! "+fm(mvpAmt)+" 벌었어요"});
+    if(least && leastAmt===0 && logs.length>0) funMsg.push({emoji:"😴",text:least+"님, 이번 주 아직 집안일 0회... 분발!"});
+    else if(least && mvp && least!==mvp && logs.length>0) funMsg.push({emoji:"💪",text:least+"님이 좀 더 하면 공평해져요!"});
+    if(fairness>=80) funMsg.push({emoji:"⚖️",text:"공정성 "+fairness+"점! 우리 가족 역할 분담 훌륭해요 👏"});
+    else if(fairness>=50) funMsg.push({emoji:"⚖️",text:"공정성 "+fairness+"점. 조금만 더 고르게 하면 완벽!"});
+    else if(monthTotal>0) funMsg.push({emoji:"⚖️",text:"공정성 "+fairness+"점... 특정 사람에게 집중되어 있어요 😅"});
+    if(dayCounts[busiestDay]>0) funMsg.push({emoji:"📅",text:dayNames[busiestDay]+"요일에 집안일을 가장 많이 해요!"});
+    streaks.forEach(function(s){ funMsg.push({emoji:"🔥",text:s.member+"님 "+s.days+"일 연속 집안일 중! 대단해요!"}) });
+    if(topChore) funMsg.push({emoji:topChore.emoji,text:"이번 달 가장 많이 한 집안일: "+topChore.name+" ("+topChoreCount+"회)"});
+    if(botChore && topChore && botChore.name!==topChore.name) funMsg.push({emoji:botChore.emoji,text:"이번 달 가장 안 한 집안일: "+botChore.name+" ("+botChoreCount+"회)"});
+    if(logs.length===0) funMsg = [{emoji:"📭",text:"아직 기록이 없어요. 집안일을 기록해보세요!"}];
+
+    // Render
+    var insightCards = funMsg.map(function(f,i){
+      return R("div",{key:i,style:{background:"rgba(255,255,255,.04)",borderRadius:14,padding:"14px 16px",display:"flex",alignItems:"flex-start",gap:12,animation:"fadeIn "+(0.1+i*0.08)+"s ease"}},
+        R("span",{style:{fontSize:28,flexShrink:0}},f.emoji),
+        R("div",{style:{fontSize:14,lineHeight:1.6,paddingTop:4}},f.text)
+      );
+    });
+
+    // Contribution chart
+    var contribBars = members.map(function(m,i){
+      var a = monthTotals[m]||0;
+      var pct = monthTotal>0?(a/monthTotal)*100:0;
+      return R("div",{key:m,style:{marginBottom:10}},
+        R("div",{style:{display:"flex",justifyContent:"space-between",marginBottom:4}},
+          R("div",{style:{display:"flex",alignItems:"center",gap:8}},
+            R("div",{className:"avatar",style:{width:24,height:24,background:CL[i%CL.length],fontSize:11}},m[0]),
+            R("span",{style:{fontSize:13,fontWeight:600}},m)
+          ),
+          R("span",{style:{fontSize:13,fontWeight:700,color:CL[i%CL.length]}},Math.round(pct)+"%  ·  "+fm(a))
+        ),
+        R("div",{className:"pbar",style:{height:10,borderRadius:5}},
+          R("div",{className:"pfill",style:{width:pct+"%",background:CL[i%CL.length],borderRadius:5}})
+        )
+      );
+    });
+
+    // Day of week chart
+    var maxDayCount = Math.max.apply(null, dayCounts) || 1;
+    var dayBars = dayNames.map(function(d,i){
+      var pct = (dayCounts[i]/maxDayCount)*100;
+      return R("div",{key:d,style:{display:"flex",flexDirection:"column",alignItems:"center",gap:4,flex:1}},
+        R("div",{style:{fontSize:11,fontWeight:600,color:dayCounts[i]===dayCounts[busiestDay]&&dayCounts[i]>0?"#FFD93D":"rgba(255,255,255,.5)"}},dayCounts[i]),
+        R("div",{style:{width:"100%",height:60,background:"rgba(255,255,255,.04)",borderRadius:6,display:"flex",alignItems:"flex-end",justifyContent:"center",overflow:"hidden"}},
+          R("div",{style:{width:"70%",height:pct+"%",background:i===busiestDay?"#FFD93D":"#4ECDC4",borderRadius:"4px 4px 0 0",transition:"height .5s",minHeight:dayCounts[i]>0?4:0}})
+        ),
+        R("div",{style:{fontSize:11,fontWeight:i===0?600:i===6?600:400,color:i===0?"#FF6B6B":i===6?"#4ECDC4":"rgba(255,255,255,.5)"}},d)
+      );
+    });
+
+    els.push(R("div",{key:"rpt",style:{padding:20,animation:"fadeIn .3s"}},
+      R("h2",{style:{fontSize:22,fontWeight:900,marginBottom:4}},"📊 리포트"),
+      R("p",{style:{fontSize:13,opacity:.5,marginBottom:20}},"우리 가족 집안일 분석"),
+
+      // Fairness gauge
+      R("div",{className:"card",style:{marginBottom:16,textAlign:"center"}},
+        R("div",{style:{fontSize:13,opacity:.5,marginBottom:8}},"이번 달 공정성 점수"),
+        R("div",{style:{fontSize:56,fontWeight:900,color:fairness>=80?"#4ECDC4":fairness>=50?"#FFD93D":"#FF6B6B"}},fairness),
+        R("div",{style:{fontSize:14,opacity:.6,marginTop:4}},fairness>=80?"훌륭해요! 👏":fairness>=50?"나쁘지 않아요 👍":"좀 더 고르게 해봐요 💪")
+      ),
+
+      // Insights
+      R("h3",{style:{fontSize:15,fontWeight:700,marginBottom:12}},"💡 인사이트"),
+      R("div",{style:{display:"flex",flexDirection:"column",gap:8,marginBottom:24}},insightCards),
+
+      // Contribution
+      R("h3",{style:{fontSize:15,fontWeight:700,marginBottom:12}},"📈 이번 달 기여도"),
+      R("div",{className:"card",style:{marginBottom:24}},contribBars),
+
+      // Day of week
+      R("h3",{style:{fontSize:15,fontWeight:700,marginBottom:12}},"📅 요일별 활동량"),
+      R("div",{className:"card"},
+        R("div",{style:{display:"flex",gap:4}},dayBars)
+      )
+    ));
+  }
+
   // BOTTOM NAV
-  var tabs=[{id:"home",icon:"🏠",label:"홈"},{id:"calendar",icon:"📅",label:"달력"},{id:"settle",icon:"💰",label:"정산"},{id:"settings",icon:"⚙️",label:"설정"}];
+  var tabs=[{id:"home",icon:"🏠",label:"홈"},{id:"calendar",icon:"📅",label:"달력"},{id:"report",icon:"📊",label:"리포트"},{id:"settle",icon:"💰",label:"정산"},{id:"settings",icon:"⚙️",label:"설정"}];
   var navBtns = tabs.map(function(tab){
     return R("button",{key:tab.id,onClick:function(){setView(tab.id);if(tab.id==="home")setSel(null)},style:{background:"none",textAlign:"center",padding:"4px 16px",color:view===tab.id?"#4ECDC4":"#555"}},
       R("div",{style:{fontSize:22}},tab.icon),
